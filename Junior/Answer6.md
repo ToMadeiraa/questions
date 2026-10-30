@@ -1,200 +1,439 @@
-# Вопрос 6. Что интересного нашли в новых стандартах С++17, С++20?
+# 5. Какие нововведения появились в стандарте С++17
 
-> **Кратко:** C++17 — это «стандарт удобства»: он убрал много рутины (`structured bindings`, `if constexpr`, `std::optional`, `std::filesystem`), не меняя модель языка. C++20 меняет язык концептуально: **концепты**, **ranges**, **корутины**, **модули** и трёхстороннее сравнение. Правильный ответ — не список из тридцати фич, а три-пять, которые реально используются в коде, с примером и оговоркой о поддержке компиляторами.
-
----
-
-## 1. Как отвечать
-
-- Назвать **2–3 фичи C++17** и **2–3 фичи C++20**, каждую — с одной строкой «зачем это нужно».
-- Показать **пример кода**, а не только название.
-- Добавить **оговорку**: что доступно не везде (модули, `<format>`, ranges на старых компиляторах).
-- Упомянуть, что фича может быть **не про синтаксис, а про безопасность**: `std::byte`, `std::bit_cast`, гарантированное copy elision.
+C++17 (ISO/IEC 14882:2017, до публикации — C++1z) — обновление менее радикальное, чем C++11, но тоже очень крупное. Если C++11 менял сам способ написания кода, то C++17 во многом «закрывал дыры»: добавлял то, чего давно не хватало (structured bindings, `optional`/`variant`/`any`, `filesystem`, параллельные алгоритмы), упрощал метапрограммирование (`if constexpr`, fold expressions, CTAD) и убирал старый балласт.
 
 ---
 
-## 2. C++17: что действительно меняет код
+## 1. Общая характеристика
 
-| Фича | Зачем нужна |
-|---|---|
-| Structured bindings | Распаковка `pair`, `tuple`, структур в именованные переменные |
-| `if constexpr` | Ветвление по типу без SFINAE-хаков |
-| `std::optional` / `variant` / `any` | «Может не быть», типобезопасный union, стирание типа |
-| `std::string_view` | Невладеющий срез строки без копирования |
-| `std::filesystem` | Переносимые пути, обход каталогов, размеры файлов |
-| Fold expressions | Свёртка параметров пакета одним оператором |
-| CTAD | Вывод параметров шаблона класса: `std::pair p{1, 2}` |
-| `inline`-переменные | Определение в заголовке без нарушения ODR |
-| `[[nodiscard]]`, `[[maybe_unused]]`, `[[fallthrough]]` | Намерения компилятору и читателю |
-| Гарантированное copy elision | Объект создаётся на месте, копий нет |
-| Параллельные алгоритмы | `std::sort(std::execution::par, ...)` |
-| `std::scoped_lock`, `std::shared_mutex` | Безопасная блокировка нескольких мьютексов |
+Ключевые направления C++17:
+
+- **Удобство языка** — structured bindings, инициализатор в `if`/`switch`, inline-переменные.
+- **Метапрограммирование** — `if constexpr`, fold expressions, вариадические улучшения, `_v`-суффиксы.
+- **Вывод типов** — class template argument deduction (CTAD).
+- **Библиотека** — «большая тройка» `std::optional` / `std::variant` / `std::any`, `std::string_view`, `std::filesystem`.
+- **Производительность** — гарантированное копирование-элиминирование (copy elision), параллельные алгоритмы.
+- **Чистка** — удаление `auto_ptr`, `random_shuffle`, триграфов и прочего устаревшего.
 
 ---
 
-## 3. C++17: примеры
+## 2. Языковые нововведения
+
+### 2.1. Structured bindings (структурированные привязки)
+
+Возможность «распаковать» кортеж, пару, массив или простую структуру в отдельные имена:
 
 ```cpp
-#include <map>
-#include <string>
+std::pair<int, std::string> p{1, "one"};
+auto [id, name] = p;
 
-std::map<std::string, int> stats{{"errors", 3}};
+for (const auto& [key, value] : myMap)
+    std::cout << key << " = " << value << '\n';
 
-for (const auto& [key, value] : stats)        // structured bindings
-    report(key, value);
+int arr[3] = {1, 2, 3};
+auto [a, b, c] = arr;
 
-auto [it, inserted] = stats.try_emplace("warnings", 0);  // вставка без копирования
+struct Point { int x, y; };
+auto [px, py] = Point{10, 20};
 ```
 
-```cpp
-#include <string>
-#include <type_traits>
+Работает и по ссылке: `auto& [k, v] = *it;`.
 
-template <typename T>
-std::string classify(const T&) {
-    if constexpr (std::is_arithmetic_v<T>)            // ветка отбрасывается на этапе компиляции
-        return "число";
-    else if constexpr (std::is_same_v<T, std::string>)
-        return "строка";
+### 2.2. Инициализатор в `if` и `switch`
+
+Позволяет ограничить область видимости вспомогательной переменной самим оператором:
+
+```cpp
+if (auto it = m.find(key); it != m.end())
+    use(it->second);
+
+switch (auto code = compute(); code) {
+    case 0: /* ... */ break;
+    default: /* ... */ break;
+}
+```
+
+### 2.3. `if constexpr`
+
+Ветвление на этапе компиляции: невыбранная ветка не инстанцируется, что делает шаблонный код гораздо проще SFINAE-хаков.
+
+```cpp
+template<class T>
+void print(const T& value) {
+    if constexpr (std::is_integral_v<T>)
+        std::cout << "int: " << value;
     else
-        return "другое";
+        std::cout << "other: " << value;
 }
 ```
 
+### 2.4. Fold expressions (свёртки)
+
+Короткий синтаксис применения бинарной операции к пакету параметров:
+
 ```cpp
-#include <optional>
-#include <string>
-#include <string_view>
-#include <variant>
+template<class... Ts>
+auto sum(Ts... args) { return (args + ...); }         // унарная правая
 
-std::optional<int> parseInt(std::string_view s);   // «значения нет» выражено типом
+template<class... Ts>
+bool all_true(Ts... args) { return (... && args); }   // унарная левая
 
-using Value = std::variant<int, double, std::string>;
-Value v = 42;
-if (auto* p = std::get_if<int>(&v))                 // проверка без исключения
-    use(*p);
+template<class... Ts>
+auto sum_with_init(Ts... args) { return (0 + ... + args); } // с начальным значением
 ```
 
-> **Ловушка `string_view`:** он не владеет данными. Возврат `string_view` на локальную строку — висячая ссылка, причём без предупреждения.
+### 2.5. Class template argument deduction (CTAD) и deduction guides
 
----
+Компилятор сам выводит параметры шаблона класса из аргументов конструктора:
 
-## 4. C++20: что меняет подход
+```cpp
+std::pair p{1, 2.5};              // std::pair<int, double>
+std::vector v{1, 2, 3};           // std::vector<int>
+std::tuple t{1, "hello", 3.0};    // std::tuple<int, const char*, double>
+std::lock_guard lk(m);            // std::lock_guard<std::mutex>
+```
 
-| Фича | Зачем нужна |
+Можно задавать собственные правила вывода:
+
+```cpp
+template<class T> struct Box { T value; };
+Box(const char*) -> Box<std::string>;
+```
+
+### 2.6. `auto` в качестве non-type template parameter
+
+```cpp
+template<auto N>
+struct Constant { static constexpr auto value = N; };
+
+Constant<42> a;
+Constant<'x'> b;
+```
+
+### 2.7. Inline-переменные
+
+`inline` теперь применим к переменным, что позволяет определять их в заголовочных файлах без ODR-нарушений:
+
+```cpp
+// header.h
+inline int global_counter = 0;
+
+struct Config {
+    inline static std::string name = "default";   // без отдельного определения
+};
+```
+
+### 2.8. Расширение `constexpr`
+
+- `constexpr`-лямбды.
+- `constexpr`-функции могут содержать `if`, циклы, локальные переменные (в C++11 тело было почти пустым).
+- Неявный `const` у `constexpr`-методов снят: `constexpr`-метод может быть non-const.
+- `constexpr`-статические члены класса неявно `inline`.
+
+```cpp
+constexpr int factorial(int n) {
+    int result = 1;
+    for (int i = 2; i <= n; ++i) result *= i;
+    return result;
+}
+```
+
+### 2.9. `static_assert` без сообщения
+
+```cpp
+static_assert(sizeof(int) == 4);   // сообщение теперь необязательно
+```
+
+### 2.10. Новые стандартные атрибуты
+
+| Атрибут | Назначение |
 |---|---|
-| Concepts / `requires` | Ограничения шаблонов и понятные ошибки компиляции |
-| Ranges / views | Ленивые конвейеры обработки последовательностей |
-| Coroutines | Приостановка функции без блокировки потока |
-| Modules | `import` вместо текстового `#include` |
-| `operator<=>` | Все шесть сравнений одной строкой |
-| Designated initializers | Инициализация по именам полей |
-| `consteval` / `constinit` | Обязательное вычисление на этапе компиляции |
-| Расширенный `constexpr` | `new`, `vector`/`string`, виртуальные функции, `try`/`catch` |
-| `std::span` | Невладеющий view на непрерывный диапазон |
-| `std::format` | Типобезопасная замена `printf` |
-| `std::jthread` + `stop_token` | Автоматический `join` и кооперативная остановка |
-| `latch` / `barrier` / `semaphore` | Готовые примитивы синхронизации |
-
----
-
-## 5. C++20: примеры
+| `[[fallthrough]]` | подавляет предупреждение о «проваливании» в `switch` |
+| `[[nodiscard]]` | предупреждает, если возвращаемое значение игнорируется |
+| `[[maybe_unused]]` | подавляет предупреждение о неиспользуемой сущности |
 
 ```cpp
-#include <concepts>
-#include <ostream>
+[[nodiscard]] int compute();
+[[maybe_unused]] auto [a, b] = get_pair();
 
-template <std::integral T>                     // ошибка будет внятной, а не в 200 строк
-T gcd(T a, T b) {
-    while (b != 0) { T t = a % b; a = b; b = t; }
-    return a;
+switch (x) {
+    case 1:
+        do_something();
+        [[fallthrough]];
+    case 2:
+        do_more();
+        break;
 }
-
-template <typename T>
-concept Printable = requires(T t, std::ostream& os) { os << t; };
 ```
 
+(Атрибуты `[[deprecated]]`, `[[noreturn]]` появились раньше — в C++11/14.)
+
+### 2.11. Вложенные пространства имён
+
 ```cpp
-#include <iostream>
-#include <ranges>
-#include <vector>
-
-std::vector<int> v{1, 2, 3, 4, 5, 6};
-auto evens = v | std::views::filter([](int x) { return x % 2 == 0; })
-               | std::views::transform([](int x) { return x * x; });
-
-for (int x : evens) std::cout << x << ' ';      // 4 16 36, без промежуточных контейнеров
+namespace A::B::C {   // вместо namespace A { namespace B { namespace C {
+    void f();
+}
 ```
 
-```cpp
-#include <compare>
+### 2.12. Улучшения лямбд
 
-struct Version {
-    int major = 0, minor = 0;
-    auto operator<=>(const Version&) const = default;   // получаем <, <=, >, >=, ==
+- Захват `*this` по значению: `[=, *this] { ... }` — копия объекта, а не указателя.
+- `constexpr`-лямбды.
+- Лямбды в `constexpr`-контексте.
+
+### 2.13. Гарантированное копирование-элиминирование (guaranteed copy elision)
+
+В ряде случаев компилятор **обязан** не создавать промежуточный объект — даже если конструктор копирования/перемещения удалён:
+
+```cpp
+struct NonCopyable {
+    NonCopyable() = default;
+    NonCopyable(const NonCopyable&) = delete;
 };
 
-bool newer = Version{2, 1} > Version{1, 9};             // true
+NonCopyable make() { return NonCopyable{}; }   // OK в C++17, ошибка в C++14
+NonCopyable x = NonCopyable{};                 // OK
 ```
+
+### 2.14. `noexcept` стал частью типа функции
 
 ```cpp
-#include <stop_token>
-#include <thread>
-
-std::jthread worker([](std::stop_token st) {
-    while (!st.stop_requested()) { /* полезная работа */ }
-});                                            // деструктор: request_stop() + join()
+void f() noexcept;
+void g() throw();       // по-прежнему эквивалент noexcept
+void (*p)() noexcept = &f;
+static_assert(!std::is_same_v<decltype(&f), decltype(&g)>);
 ```
 
----
+### 2.15. Уточнённый порядок вычислений
 
-## 6. Разница в подходе
+C++17 формально зафиксировал порядок для ряда выражений: постфиксные выражения, операторы `<<`/`>>`, индексация, вызов функции. Аргументы функции теперь **indeterminately sequenced** (не пересекаются), поэтому `f(i++, i++)` перестало быть UB (но осталось unspecified).
 
-| Аспект | C++17 | C++20 |
-|---|---|---|
-| Характер изменений | Удобство и безопасность повседневного кода | Новые парадигмы и расширение выразительности |
-| Шаблоны | `if constexpr` как обход SFINAE | Concepts как полноценные ограничения |
-| Работа с последовательностями | Алгоритмы и итераторы | Ranges и ленивые view |
-| Многопоточность | `std::thread`, `std::scoped_lock` | `std::jthread`, `stop_token`, семафоры, барьеры |
-| Компиляция | `inline`-переменные, CTAD | Модули (поддержка неполная), `consteval` |
-| Риск при внедрении | Низкий, фичи локальны | Средний: нужны свежие компиляторы и библиотеки |
+### 2.16. Прочие языковые изменения
 
----
-
-## 7. Что учитывать при внедрении
-
-- **Поддержка компиляторами различается.** Concepts есть в GCC 10+ и Clang 10+, ranges — в libstdc++ с GCC 10 (с Clang работает через libstdc++), в libc++ заметно позже; модули и `<format>` появились позже остальных фич.
-- **Модули и `<format>` — самые «молодые» фичи:** `<format>` требует свежей стандартной библиотеки, а модули в продакшене применяются редко из-за состояния сборки и инструментов, поэтому `#include` и `printf`/`ostringstream` остаются нормой.
-- **Корутины — это механизм, а не библиотека**: нужен свой `Task` с `promise_type` либо сторонняя библиотека.
-- **Обратная совместимость** обычно есть, но детали меняются: в C++20 неявный захват `this` через `[=]` объявлен устаревшим, а часть неявных преобразований в шаблонах стала строже.
+| Изменение | Суть |
+|---|---|
+| `__has_include` | проверка наличия заголовка в препроцессоре |
+| `auto x{1}` | теперь `int` (а не `initializer_list<int>`) |
+| Списочная инициализация enum | разрешена для enum с фиксированным базовым типом |
+| `typename` в template template parameter | `template<template<typename> typename>` |
+| Агрегаты | расширены: базы, `default`-члены |
+| `using` для наследования конструкторов | уточнены правила |
 
 ---
 
-## Типичные ошибки
+## 3. Нововведения стандартной библиотеки
 
-1. **Перечислять всё подряд**, не умея показать ни одной фичи в коде.
-2. **Путать стандарты**: concepts, ranges и корутины — это C++20, а не C++17; `std::optional` — C++17, а не C++11.
-3. **Считать `std::optional` заменой указателю** — это разные вещи: `optional` хранит значение внутри себя.
-4. **Забывать про время жизни `string_view` и `span`** — самая частая практическая ошибка с новыми типами.
-5. **Утверждать, что модули готовы к использованию** в любом проекте.
-6. **Забывать, что при defaulted `<=>` равенство генерируется автоматически** — если `==` должно учитывать не все поля, его объявляют отдельно.
-7. **Использовать `auto` с structured bindings там, где нужна ссылка**, и получать копии.
+### 3.1. `std::optional`
+
+Тип, который может либо хранить значение, либо быть пустым — замена «магическим» значениям и `bool`-флагам:
+
+```cpp
+std::optional<int> parse(std::string_view s);
+
+if (auto v = parse("42"); v)
+    std::cout << *v;
+else
+    std::cout << "нет значения";
+
+int x = opt.value_or(0);
+```
+
+`std::optional<T&>` запрещён; для ссылок используется `std::optional<std::reference_wrapper<T>>`.
+
+### 3.2. `std::variant`
+
+Типобезопасное объединение (sum type):
+
+```cpp
+std::variant<int, double, std::string> v = 42;
+v = "text";
+
+std::visit([](auto&& x) { std::cout << x; }, v);
+std::holds_alternative<int>(v);
+std::get<std::string>(v);
+std::get_if<double>(&v);
+```
+
+Пустое состояние возможно только через `valueless_by_exception()`; для «пустого» альтернативного варианта есть `std::monostate`.
+
+### 3.3. `std::any`
+
+Контейнер для значения произвольного типа (с сохранением типа):
+
+```cpp
+std::any a = 42;
+a = std::string("hello");
+
+if (a.type() == typeid(std::string))
+    std::cout << std::any_cast<std::string>(a);
+```
+
+Требует CopyConstructible; `std::any_cast` бросает `std::bad_any_cast` при неверном типе.
+
+### 3.4. `std::string_view`
+
+Невладеющее представление строки (указатель + длина) без копирования:
+
+```cpp
+void process(std::string_view sv);
+
+process("literal");
+process(std::string("temp"));
+
+using namespace std::string_view_literals;
+auto sv = "hello"sv;
+```
+
+Важно: не гарантирует нуль-терминатор и не владеет данными — следите за временем жизни.
+
+### 3.5. `std::filesystem`
+
+Полноценная библиотека работы с файловой системой (`<filesystem>`):
+
+```cpp
+namespace fs = std::filesystem;
+
+for (const auto& entry : fs::recursive_directory_iterator("dir"))
+    std::cout << entry.path() << '\n';
+
+if (fs::exists(p) && fs::is_regular_file(p))
+    std::cout << fs::file_size(p);
+
+fs::create_directories("a/b/c");
+fs::copy("src", "dst", fs::copy_options::recursive);
+fs::remove_all("tmp");
+
+auto p = fs::path("dir") / "file.txt";
+```
+
+Есть `path`, `directory_entry`, `file_status`, `perms`, `space_info`, `copy_options`, `current_path`, `temp_directory_path`, `absolute`, `canonical`, `relative` и т.д. На старых GCC требуется линковать `-lstdc++fs`.
+
+### 3.6. Параллельные алгоритмы
+
+Политики исполнения `<execution>`: `std::execution::seq`, `par`, `par_unseq`. Большинство алгоритмов `<algorithm>` и `<numeric>` получили перегрузки с политикой:
+
+```cpp
+#include <execution>
+
+std::sort(std::execution::par, v.begin(), v.end());
+std::for_each(std::execution::par_unseq, v.begin(), v.end(), f);
+```
+
+### 3.7. `std::byte`
+
+Отдельный тип для «сырых» байтов (`enum class byte : unsigned char`), не являющийся числом:
+
+```cpp
+std::byte b{0xFF};
+b = b | std::byte{0x0F};
+auto n = std::to_integer<int>(b);
+```
+
+### 3.8. `<charconv>`
+
+Быстрые, локаленезависимые преобразования чисел и строк:
+
+```cpp
+char buf[32];
+auto [ptr, ec] = std::to_chars(buf, buf + sizeof buf, 42);
+
+int value;
+std::from_chars(buf, ptr, value);
+```
+
+В C++17 поддержаны и целые, и числа с плавающей точкой.
+
+### 3.9. Полиморфные аллокаторы (`std::pmr`)
+
+`<memory_resource>`: `std::pmr::memory_resource`, `polymorphic_allocator`, `monotonic_buffer_resource`, `unsynchronized_pool_resource`, `synchronized_pool_resource`, а также псевдонимы `std::pmr::vector`, `std::pmr::string` и т.п.
+
+```cpp
+std::pmr::monotonic_buffer_resource pool;
+std::pmr::vector<int> v{&pool};
+```
+
+### 3.10. Прочие библиотечные добавления
+
+**Утилиты и обобщённый код**
+
+- `std::invoke`, `std::invoke_result`, `std::is_invocable`, `std::is_nothrow_invocable`.
+- `std::apply`, `std::make_from_tuple`.
+- `std::not_fn` — замена `std::not1`/`not2`.
+- `std::as_const`.
+- `std::launder`.
+- `std::in_place`, `std::in_place_t`, `std::in_place_type`, `std::in_place_index`.
+- `std::uncaught_exceptions` (множественное число).
+- `std::size`, `std::empty`, `std::data` — свободные функции.
+- `std::clamp`.
+- `std::gcd`, `std::lcm` (`<numeric>`).
+- `std::destroy_at`, `std::destroy`, `std::destroy_n`.
+- `std::uninitialized_default_construct(_n)`, `std::uninitialized_value_construct(_n)`, `std::uninitialized_move(_n)`.
+- `std::is_aggregate`, `std::has_unique_object_representations`.
+- `std::is_swappable`, `std::is_nothrow_swappable`.
+- `std::bool_constant`, `std::void_t`.
+- `std::conjunction`, `std::disjunction`, `std::negation`.
+- `_v`-суффиксы для всех type traits: `std::is_same_v<T, U>`, `std::is_integral_v<T>` и т.д.
+
+**Алгоритмы и численные операции**
+
+- `std::sample`, `std::for_each_n`.
+- `std::reduce`, `std::transform_reduce`.
+- `std::inclusive_scan`, `std::exclusive_scan`, `std::transform_inclusive_scan`, `std::transform_exclusive_scan`.
+- Searchers: `std::default_searcher`, `std::boyer_moore_searcher`, `std::boyer_moore_horspool_searcher` для `std::search`.
+
+**Контейнеры**
+
+- `std::map`/`std::set`: `try_emplace`, `insert_or_assign`, `merge`, `extract`, `node_type`.
+- `std::vector::emplace_back` теперь возвращает ссылку.
+- `std::string::data()` получил non-const перегрузку.
+- `std::shared_ptr<T[]>` — поддержка массивов.
+- `std::enable_shared_from_this::weak_from_this`.
+
+**Память и потоки**
+
+- Выровненное выделение памяти: `std::align_val_t`, перегрузки `operator new`/`delete` с выравниванием, `std::aligned_alloc`.
+- `std::scoped_lock` — блокировка нескольких мьютексов без deadlock.
+- `std::shared_mutex` (разделяемый мьютекс; `shared_timed_mutex` и `shared_lock` появились в C++14).
+- `std::atomic<T>::is_always_lock_free`.
+- `std::hardware_destructive_interference_size`, `std::hardware_constructive_interference_size`.
 
 ---
 
-## Что добавить на собеседовании
+## 4. Что было удалено или объявлено устаревшим
 
-- Показать **связь фичи с проблемой**: «раньше отсутствие значения кодировали `bool` + out-параметр или `nullptr`, теперь это `std::optional`».
-- Упомянуть **цену**: `std::variant` добавляет размер и ветвление, ranges могут проигрывать ручному циклу на мелких данных.
-- Сказать, **что используете в работе** и почему остальное не прижилось (например, «модули не берём: сборка и toolchain ещё не готовы»).
-- Отметить **эволюцию**: C++11 — модель памяти и move, C++14 — `constexpr`-послабления, C++17 — удобство, C++20 — концепты и ranges.
+| Элемент | Статус в C++17 |
+|---|---|
+| `std::auto_ptr` | удалён |
+| `std::random_shuffle` | удалён |
+| `std::bind1st`, `bind2nd`, `ptr_fun`, `mem_fun`, `mem_fun_ref` | удалены |
+| `std::unary_function`, `std::binary_function` | удалены |
+| Триграфы | удалены |
+| `register` | удалён как класс хранения |
+| Динамическая спецификация `throw(T)` | удалена (кроме `throw()`) |
+| `std::result_of` | устарел |
+| `std::uncaught_exception` | устарел (заменён на `uncaught_exceptions`) |
+| `std::iterator` | устарел |
+| `std::codecvt`, `std::wstring_convert` | устарели |
+| `std::not1`, `std::not2` | устарели (заменены `std::not_fn`) |
+| `std::get_temporary_buffer`, `std::raw_storage_iterator` | устарели |
+| `std::is_literal_type` | устарел |
+| `std::allocator::construct/destroy` | устарели |
 
 ---
 
-## Итог
+## 5. Итог
 
-| Стандарт | Ключевые фичи | Что даёт на практике |
-|---|---|---|
-| C++17 | Structured bindings, `if constexpr`, `optional`/`variant`, `string_view`, `filesystem`, fold, CTAD, `inline`-переменные | Меньше шаблонного кода, явные состояния, переносимые пути |
-| C++20 | Concepts, ranges, корутины, модули, `<=>`, `span`, `format`, `jthread`, расширенный `constexpr` | Читаемые шаблоны, конвейеры обработки, безопасная многопоточность |
-| Главный вывод | C++17 — про удобство, C++20 — про выразительность | Выбирать фичи по поддержке компилятора и по реальной пользе |
+Самое важное, что дал C++17:
+
+1. **Structured bindings** — `auto [a, b] = ...` радикально упростил работу с кортежами и словарями.
+2. **`if constexpr` + fold expressions** — метапрограммирование стало читаемым, SFINAE-монстры ушли в прошлое.
+3. **CTAD** — `std::pair p{1, 2.0}` вместо `std::pair<int, double> p{1, 2.0}`.
+4. **`std::optional` / `std::variant` / `std::any`** — «большая тройка» типов-сумм и опциональности.
+5. **`std::string_view`** — дешёвая передача строк без копирования.
+6. **`std::filesystem`** — переносимая работа с файлами наконец вошла в стандарт.
+7. **Параллельные алгоритмы** — декларативное распараллеливание стандартных алгоритмов.
+8. **Гарантированное copy elision** — стало проще возвращать non-copyable объекты по значению.
+9. **Inline-переменные и `[[nodiscard]]`/`[[fallthrough]]`/`[[maybe_unused]]`** — чище заголовочный и «предупреждающий» код.
+
+По масштабу C++17 уступает C++11, но именно он сделал повседневный C++ заметно приятнее: меньше шаблонного шума, меньше ручных проверок на «пустоту», меньше велосипедов для файлов и строк.
